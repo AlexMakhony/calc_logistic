@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="uk">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Логістичний калькулятор — 20т (тент/реф)</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-slate-50 min-h-screen p-4 md:p-6">
+    <div id="root"></div>
+    <style>
+      input[type=number]::-webkit-inner-spin-button,
+      input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+      input[type=number] { -moz-appearance: textfield; }
+    </style>
+    <script type="text/babel" data-presets="react">
+      const { useState, useMemo } = React;
+
+      const DRIVER = { perKmUA: 0.095238, perKmEU: 0.14218, monthlySalaryTaxes: 500, perDiemUA: 7.11, businessTripEU: 222 };
+      const DIRECT = {
+  permitsEUPerKm: 0.11,
+  permitsUAPerKm: 0,
+  exploitationPerKm: 0.10,
+  orgPerKm: 0.05,
+  depreciationPerKm: 0.1027,
+  generalPerKm: 0.07,
+  adminPerKm: 0.09,
+  parkingInternational: 75
+};
+      const INDIRECT_MONTHLY = { overhead: 0, admin: 0 };
+      const FUEL = { emptyLper100: 28, loadedLper100: 34, reeferAutoLPerDay: 30, reeferNonstopLPerDay: 84, priceUA: 1.23, priceEU: 2.0 };
+      const fmt = (n) => n.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+
+      function LogisticCalculator() {
+        const [inputs, setInputs] = useState({ tripType: 'міжнародний', cargoType: 'тент', freightUSD: '', kmUA: '', kmEU: '', daysUA: '', daysEU: '', otherBonuses: '', emptySharePct: '', ferryCost: '' });
+        const isInternational = inputs.tripType === 'міжнародний';
+        const kmEU = isInternational ? +inputs.kmEU || 0 : 0;
+        const daysEU = isInternational ? +inputs.daysEU || 0 : 0;
+        const daysUA = (+inputs.daysUA || 0);
+        const kmUA = (+inputs.kmUA || 0);
+        const totalKm = kmUA + kmEU;
+        const totalDays = daysUA + daysEU;
+
+        const results = useMemo(() => {
+          const emptyKm = totalKm * ((+inputs.emptySharePct || 0) / 100);
+          const loadedKm = Math.max(totalKm - emptyKm, 0);
+          const litersDriving = (loadedKm * FUEL.loadedLper100 + emptyKm * FUEL.emptyLper100) / 100;
+          const shareEU = totalKm > 0 ? kmEU / totalKm : 0;
+          const litersUA = litersDriving * (1 - shareEU);
+          const litersEU = litersDriving * shareEU;
+          let reeferLitersUA = 0, reeferLitersEU = 0;
+          if (inputs.cargoType.includes('РЕФ')) {
+            const rate = inputs.cargoType === 'РЕФ(авто)' ? FUEL.reeferAutoLPerDay : FUEL.reeferNonstopLPerDay;
+            reeferLitersUA = rate * daysUA;
+            reeferLitersEU = rate * daysEU;
+          }
+          const fuelCostUA = (litersUA + reeferLitersUA) * FUEL.priceUA;
+          const fuelCostEU = (litersEU + reeferLitersEU) * FUEL.priceEU;
+          const fuelTotal = fuelCostUA + fuelCostEU;
+
+          const isRC = inputs.tripType === 'РЦ';
+          const motivation = isRC ? 24 * daysUA : (kmUA * DRIVER.perKmUA + kmEU * DRIVER.perKmEU);
+          const perDiems = isRC ? 0 : (daysUA * DRIVER.perDiemUA + (isInternational && daysEU > 0 ? DRIVER.businessTripEU : 0));
+          const salaryAlloc = (DRIVER.monthlySalaryTaxes / 30) * totalDays;
+          const driverTotal = motivation + perDiems + salaryAlloc;
+
+          const directExploit = totalKm * DIRECT.exploitationPerKm;
+const directOrg = totalKm * DIRECT.orgPerKm;
+const directDepr = totalKm * DIRECT.depreciationPerKm;
+const directGeneral = totalKm * DIRECT.generalPerKm;
+const directAdmin = totalKm * DIRECT.adminPerKm;
+
+// Дозвільні
+const directPermitEU = isInternational ? kmEU * DIRECT.permitsEUPerKm + (+inputs.ferryCost || 0) : 0;
+const directPermitUA = 0;
+
+// Стоянки міжнародні
+const directParking = isInternational ? DIRECT.parkingInternational : 0;
+
+const directOther = inputs.tripType === 'міжнародний' ? 0 : inputs.tripType === 'внутрішній' ? totalKm * 0.01 : 0;
+
+const directTotal = directExploit + directOrg + directDepr + directGeneral + directAdmin + directPermitEU + directOther + directParking;
+
+          const indirectAlloc = ((INDIRECT_MONTHLY.overhead + INDIRECT_MONTHLY.admin) / 30) * totalDays;
+
+          const revenue = (+inputs.freightUSD || 0) + (+inputs.otherBonuses || 0);
+          const grossProfit = revenue - fuelTotal - driverTotal - directTotal;
+          const netProfit = grossProfit - indirectAlloc;
+          const profitPerKm = totalKm > 0 ? netProfit / totalKm : 0;
+
+          return {
+            revenue, grossProfit, netProfit, profitPerKm,
+            fuelTotal, fuelCostUA, fuelCostEU,
+            driverTotal, motivation, perDiems, salaryAlloc,
+            directTotal, directExploit, directOrg, directDepr, directGeneral, directAdmin, directPermitEU, directOther, directParking,
+            totalKm, totalDays
+          };
+        }, [inputs, totalKm, totalDays, kmUA, kmEU, daysUA, daysEU, isInternational]);
+
+        const set = (k, v) => setInputs({ ...inputs, [k]: v });
+
+        const KPI = [
+          ['Доход', results.revenue],
+          ['ГСМ (разом)', results.fuelTotal],
+          ['Мотивація водія', results.driverTotal],
+          ['Прямі витрати', results.directTotal],
+          ['Валовий прибуток', results.grossProfit],
+          ['Чистий прибуток', results.netProfit],
+          ['Прибуток / км', results.profitPerKm]
+        ];
+
+        const getColorClass = (label, val) => {
+          const highlight = ['Валовий прибуток', 'Чистий прибуток', 'Прибуток / км'];
+          if (!highlight.includes(label)) return 'text-gray-900';
+          return val >= 0 ? 'text-emerald-600' : 'text-rose-600';
+        };
+
+        return (
+          <div className="max-w-6xl mx-auto pb-24 md:pb-0">
+            <h1 className="text-3xl font-bold mb-4">Логістичний калькулятор — 20т (тент/реф)</h1>
+            <div className="grid md:grid-cols-3 gap-4">
+              <div className="space-y-3">
+                <Card title="Параметри рейсу">
+                  <Select label="Тип рейсу" value={inputs.tripType} options={['внутрішній','міжнародний','РЦ']} onChange={(e)=>set('tripType',e.target.value)} />
+                  <Select label="Тип вантажу" value={inputs.cargoType} options={['тент','РЕФ(авто)','РЕФ(нонстоп)']} onChange={(e)=>set('cargoType',e.target.value)} />
+                  <Input label="Фрахт, $" value={inputs.freightUSD} onChange={(e)=>set('freightUSD',e.target.value)} />
+                  <Input label="Інші премії, $" value={inputs.otherBonuses} onChange={(e)=>set('otherBonuses',e.target.value)} />
+                  <Input label="Паром, $" value={inputs.ferryCost} onChange={(e)=>set('ferryCost',e.target.value)} />
+                </Card>
+                <Card title="Пробіг та час">
+                  <Input label="Пробіг UA, км" value={inputs.kmUA} onChange={(e)=>set('kmUA',e.target.value)} />
+                  <Input label="Пробіг ЄС, км" value={inputs.kmEU} onChange={(e)=>set('kmEU',e.target.value)} disabled={!isInternational} />
+                  <Input label="Днів UA" value={inputs.daysUA} onChange={(e)=>set('daysUA',e.target.value)} />
+                  <Input label="Днів ЄС" value={inputs.daysEU} onChange={(e)=>set('daysEU',e.target.value)} disabled={!isInternational} />
+                  <Input label="Пустий пробіг, %" value={inputs.emptySharePct} onChange={(e)=>set('emptySharePct',e.target.value)} />
+                </Card>
+              </div>
+              <div className="md:col-span-2 space-y-4">
+                <Card title="Результати">
+                  <div className="grid md:grid-cols-2 gap-2">
+                    {KPI.map(([label,val])=> (
+                      <div key={label} className="p-3 border rounded-xl bg-white flex justify-between">
+                        <span>{label}</span>
+                        <b className={getColorClass(label, val)}>${fmt(val)}</b>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-3 text-sm text-gray-600">Загальний пробіг: {fmt(results.totalKm)} км, Днів у рейсі: {fmt(results.totalDays)}.</div>
+                </Card>
+
+                <Card title="Мотивація водія — детально">
+                  <DetailRow label="Мотивація (км або 24$×дні UA)" value={results.motivation} />
+                  <DetailRow label="Добові та відрядження" value={results.perDiems} />
+                  <DetailRow label="Зарплата+податки (алокація)" value={results.salaryAlloc} />
+                  <div className="mt-2 pt-2 border-t flex justify-between font-semibold">
+                    <span>Разом мотивація</span><span>${fmt(results.driverTotal)}</span>
+                  </div>
+                </Card>
+
+                <Card title="Прямі витрати — детально">
+  <DetailRow label="Дозвільні (UTA)" value={results.directPermitEU} />
+  <DetailRow label="Стоянки міжнародні" value={results.directParking} />
+  <DetailRow label="Прямі інші витрати" value={results.directOther} />
+  <DetailRow label="Організаційні витрати" value={results.directOrg} />
+  <DetailRow label="Експлуатаційні витрати" value={results.directExploit} />
+  <DetailRow label="Амортизація" value={results.directDepr} />
+  <DetailRow label="Загальновиробничі" value={results.directGeneral} />
+  <DetailRow label="Адміністративні" value={results.directAdmin} />
+  <div className="mt-2 pt-2 border-t flex justify-between font-semibold">
+    <span>Разом прямі витрати</span><span>${fmt(results.directTotal)}</span>
+  </div>
+</Card>
+
+                <Card title="Паливо — довідка">
+                  <DetailRow label="Пальне в Україні" value={results.fuelCostUA} />
+                  <DetailRow label="Пальне в ЄС" value={results.fuelCostEU} />
+                  <div className="mt-2 pt-2 border-t flex justify-between font-semibold">
+                    <span>Разом паливо</span><span>${fmt(results.fuelTotal)}</span>
+                  </div>
+                </Card>
+
+                <Card title="Вердикт">
+                  {results.netProfit >= 0 ? <div className="text-emerald-700 font-bold">Рейс вигідний 👍</div> : <div className="text-rose-700 font-bold">Рейс збитковий ⚠️</div>}
+                </Card>
+              </div>
+            </div>
+
+            <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur border-t p-3">
+              <div className="flex items-center justify-between">
+                <div className="text-sm text-slate-600">Чистий прибуток</div>
+                <div className={`text-lg font-semibold ${results.netProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>${fmt(results.netProfit)}</div>
+              </div>
+              <div className="text-xs text-slate-500">Прибуток/км: <b className={`${results.profitPerKm >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>${fmt(results.profitPerKm)}</b></div>
+            </div>
+          </div>
+        );
+      }
+
+      function Card({ title, children }) {
+        return (
+          <div className="bg-white rounded-2xl shadow p-4 border">
+            <h2 className="text-lg font-semibold mb-2">{title}</h2>
+            {children}
+          </div>
+        );
+      }
+
+      function Select({ label, value, onChange, options }) {
+        return (
+          <div>
+            <label className="text-sm text-gray-600">{label}</label>
+            <select className="border rounded-xl px-2 py-1 w-full" value={value} onChange={onChange}>
+              {options.map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </select>
+          </div>
+        );
+      }
+
+      function Input({ label, value, onChange, disabled }) {
+        return (
+          <div className="space-y-1">
+            <label className="text-sm text-gray-600">{label}</label>
+            <input
+              type="number"
+              inputMode="decimal"
+              enterKeyHint="done"
+              disabled={disabled}
+              value={value}
+              onChange={onChange}
+              onFocus={(e) => {
+                if (e.target.value === '0' || e.target.value === '') e.target.value = '';
+                onChange(e);
+              }}
+              className="border rounded-xl px-3 py-3 w-full text-base"
+            />
+          </div>
+        );
+      }
+
+      function DetailRow({ label, value }) {
+        return (
+          <div className="flex justify-between py-1 text-sm">
+            <span className="text-slate-600">{label}</span>
+            <span className="font-medium">${fmt(value)}</span>
+          </div>
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById('root')).render(<LogisticCalculator />);
+    </script>
+  </body>
+</html>
+
+
+
